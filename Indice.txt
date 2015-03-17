@@ -1,0 +1,4 @@
+Indice 
+
+-  Función para consultar del tarifario la información de la seccion de "Afecto (para cotizar)" 
+	dbo.fn_Consultar_Afecto_Tarifas

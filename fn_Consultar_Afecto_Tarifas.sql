@@ -12,7 +12,7 @@ Requerimiento : SERV-CU007 Administrar servicios
 Ultima Modific. Por : 
 Día Modifica : 
 ------------------------------------------------------------------------------------------------*/
-ALTER FUNCTION dbo.fn_Consultar_Afecto_Tarifas
+CREATE FUNCTION dbo.fn_Consultar_Afecto_Tarifas
 (	
 	@idTarifario INT
 )

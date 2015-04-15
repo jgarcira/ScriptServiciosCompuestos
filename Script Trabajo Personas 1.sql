@@ -3,7 +3,7 @@ SET NOCOUNT ON;
 DECLARE
 	-- Parametros Principales
 	 @fecha DATE =N'2015/04/05'
-	,@baseReferencia VARCHAR(MAX) =  '1-10-15-16-25-26-27'
+	,@baseReferencia VARCHAR(MAX) = '1-10-15-16-25-26-27'
 	,@tipoPax BIT= 1
 	, @idServicio INT = 1353
 	-- Parametros de valores de Tarifio
@@ -12,7 +12,7 @@ DECLARE
 	, @IGVNacional BIT = 1
 	, @IGVExtranjero BIT = 1
 	, @afectoRecargo DECIMAL(12,2) = 0.08 
-
+	 
 	/* Variables de la función	*/
 		DECLARE @CategoriaTarifario INT = 90004, @numeroPasajerosBus SMALLINT, @flagPlus BIT, @maxPaxGuiar INT, @paxGrupo INT,  @porcentajeFechaEspecial DECIMAL (12,2) = 0, @politicaColtur INT= 0, @paramNoCupoBus INT = 0, @paramNoGuia INT = 0  
 	
@@ -30,9 +30,14 @@ DECLARE
 
 	/* Se consulta valores A+ - Maximo Pax a guiar - Pax por grupo - Política COLTUR */
 		SELECT @flagPlus = [FlagA], @maxPaxGuiar = [PaxMaximoGuia], @paxGrupo = [PaxGrupo], @politicaColtur = [CodigoPoliticaTransporte] FROM [Maestras].[TbTarifarios] WHERE [IdTarifario] = @IdTarifario
-		PRINT 'Pax Grupo ' + convert(VARCHAR,@paxGrupo)
-				
-		IF((@politicaColtur = NULL OR @politicaColtur = 0) AND @maxPaxGuiar = NULL)
+		PRINT 'Max Grupo ' + convert(VARCHAR,@maxPaxGuiar) + ' Pax Grupo ' + convert(VARCHAR,@paxGrupo) + ' Politica Coltur ' + convert(varchar,@politicaColtur)
+		
+		IF( @flagPlus = 0)
+			BEGIN
+				SET @paramNoGuia = 1	
+				SET @paramNoCupoBus = ISNULL((SELECT dbo.fn_CantidadMaximaTransportePasajeros(@politicaColtur,@fecha)),0)  -- Se consulta el número de pasajeros de un Bus	
+			END
+		ELSE IF((@politicaColtur = NULL OR @politicaColtur = 0) AND @maxPaxGuiar = NULL)
 			BEGIN
 				/* Si el servicio no tiene asociada una política de transporte y el máximo de pax a guiar esta vacío, el número de guías será 1. */
 				SET @paramNoGuia = 1
@@ -82,11 +87,6 @@ DECLARE
 			WHERE CodigoTarifario = @IdTarifario AND CodigoTipoPolitica = @politicasFechasEspeciales  AND @fecha BETWEEN FechaDesde AND FechaHasta
 
 
-	--SELECT @flagPlus AS '@flagPlus', @maxPaxGuiar AS '@maxPaxGuiar', @paxGrupo AS '@paxGrupo', @politicaColtur AS '@politicaColtur', @paramNoCupoBus AS '@paramNoCupoBus'
-	--		, @cantidadParaLiberar AS '@cantidadParaLiberar', @cantidadItemLiberados AS '@cantidadItemLiberados', @cantidadMaximoLiberar AS '@cantidadMaximoLiberar', @porcentajeFechaEspecial AS '@porcentajeFechaEspecial', @paramNoGuia AS '@paramNoGuia', @paramNoCupoBus AS '@paramNoCupoBus'
-	SELECT * FROM @RangoPersonasTable
-
-
 	/* Se realiza el While para la Base referencia   */
 
 		INSERT INTO @ListaBaseReferencia
@@ -102,9 +102,9 @@ DECLARE
 			, @resultadoInsertar DECIMAL(18,2) = 0
 			, @costoNetoGrupal  DECIMAL(18,2) = 0
 			, @costoNetoPersonal  DECIMAL(18,2) = 0
-			, @acumuladoCostoNetoGrupal  DECIMAL(18,2) = 0 -- Parámetro para acumular todos los costos netos dentro de While
+			, @acumuladoCostoNetoGrupal   DECIMAL(18,2) = 0 -- Parámetro para acumular todos los costos netos dentro de While
 			, @resultadoResta INT = 0 -- Parámetro para restar Base Ref y Pax Grupo, para calcular el Costo Neto por Persona.
-			
+			DECLARE @paramHasta INT = 0, @paramCostGrupalHasta DECIMAL(18,2) = 0, @paramCostoNetoPersonal DECIMAL(18,2) = 0
 			SET @parametroBaseRef = (SELECT CONVERT(INT,[BaseRef]) FROM @ListaBaseReferencia WHERE Id = @RowCnt)
 
 			IF(@parametroBaseRef = 1)
@@ -120,11 +120,31 @@ DECLARE
 							/* Si el servicio no tiene asociada una política de transporte y el máximo de pax a guiar esta vacío, el número de guías será 1. */
 							SET @costoNetoGrupal = (SELECT TOP 1 [CostoNetoGrupal]  FROM @RangoPersonasTable WHERE @parametroBaseRef BETWEEN DESDE AND HASTA)
 							SET @costoNetoPersonal = (SELECT TOP 1 [CostoNetoPersona]  FROM @RangoPersonasTable WHERE @parametroBaseRef BETWEEN DESDE AND HASTA)
-							IF(@parametroBaseRef > @paxGrupo)
-							BEGIN
-								SET @acumuladoCostoNetoGrupal =  ((ISNULL(@costoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
+							IF (@costoNetoGrupal IS NULL)
+								BEGIN
+									SET @paramHasta = 0
+									SET @paramCostGrupalHasta = 0
+									SET @paramCostoNetoPersonal = 0
+									SELECT TOP 1  @paramHasta = [HASTA], @paramCostGrupalHasta = [CostoNetoGrupal], @paramCostoNetoPersonal = [CostoNetoPersona] 
+										FROM @RangoPersonasTable ORDER BY [HASTA] DESC
+									SET @resultadoResta = @parametroBaseRef - @paramHasta
+									SET @acumuladoCostoNetoGrupal =  (ISNULL(@paramCostGrupalHasta,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) +  ((ISNULL(@paramCostoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
+								END
+							ELSE
+								BEGIN
+									IF(@parametroBaseRef > @paxGrupo)
+										BEGIN
+											SET @acumuladoCostoNetoGrupal =  ((ISNULL(@costoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
+										END
+											SET @acumuladoCostoNetoGrupal = (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) + @acumuladoCostoNetoGrupal
 							END
-								SET @acumuladoCostoNetoGrupal = (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) + @acumuladoCostoNetoGrupal
+							
+							IF(@flagPlus = 0)
+								BEGIN
+									IF(@parametroBaseRef > @paramNoCupoBus )	
+										SET @acumuladoCostoNetoGrupal = -1
+								END
+														
 						END
 					ELSE
 						BEGIN
@@ -184,25 +204,48 @@ DECLARE
 								BEGIN
 									SET @costoNetoGrupal = (SELECT TOP 1 [CostoNetoGrupal]  FROM @RangoPersonasTable WHERE @parametroBaseRef BETWEEN DESDE AND HASTA)
 									SET @costoNetoPersonal = (SELECT TOP 1 [CostoNetoPersona]  FROM @RangoPersonasTable WHERE @parametroBaseRef BETWEEN DESDE AND HASTA)
-									IF(@parametroBaseRef > @paxGrupo)
+
+									IF (@costoNetoGrupal IS NULL)
 										BEGIN
-											SET @resultadoResta = @parametroBaseRef - @paxGrupo
-											SET @acumuladoCostoNetoGrupal =  (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) +  ((ISNULL(@costoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
+											SET @paramHasta = 0
+											SET @paramCostGrupalHasta = 0
+											SET @paramCostoNetoPersonal = 0
+											SELECT TOP 1  @paramHasta = [HASTA], @paramCostGrupalHasta = [CostoNetoGrupal], @paramCostoNetoPersonal = [CostoNetoPersona] 
+												FROM @RangoPersonasTable ORDER BY [HASTA] DESC
+											SET @resultadoResta = @parametroBaseRef - @paramHasta
+											SET @acumuladoCostoNetoGrupal =  (ISNULL(@paramCostGrupalHasta,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) +  ((ISNULL(@paramCostoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
 										END
 									ELSE
 										BEGIN
-											SET @acumuladoCostoNetoGrupal =  (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))
+											IF(@parametroBaseRef > @paxGrupo)
+												BEGIN
+													SET @resultadoResta = @parametroBaseRef - @paxGrupo
+													SET @acumuladoCostoNetoGrupal =  (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo)) +  ((ISNULL(@costoNetoPersonal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))* @resultadoResta )
+												END
+											ELSE
+												BEGIN
+													SET @acumuladoCostoNetoGrupal =  (ISNULL(@costoNetoGrupal,0) * (1+(@valorIGV/100.0)+ @afectoRecargo))
+												END
 										END
+
 								END
 						END
 
 				END
 	
+		IF(@acumuladoCostoNetoGrupal = -1)
+			SET @acumuladoCostoNetoGrupal = NULL
+		ELSE
+			SET @acumuladoCostoNetoGrupal = @acumuladoCostoNetoGrupal / @parametroBaseRef
 
-		SET @acumuladoCostoNetoGrupal = @acumuladoCostoNetoGrupal / @parametroBaseRef
+
 
 			SELECT @parametroBaseRef  '@parametroBaseRef',@paramNoCupoBus  '@paramNoCupoBus', @totalGuias  '@totalGuias', @paxsporGrupo '@paxsporGrupo', @paxsobran '@paxsobran',   @acumuladoCostoNetoGrupal '@acumuladoCostoNetoGrupal', @paramNoGuia '@paramNoGuia',  @cociente '@cociente'
 
 		SET @resultadoCalculo = (SELECT [dbo].[fn_CalcularFechasEspeciales] (@acumuladoCostoNetoGrupal,@porcentajeFechaEspecial))		
 		SET @RowCnt = @RowCnt + 1
 		END
+
+		--SELECT @flagPlus AS '@flagPlus', @maxPaxGuiar AS '@maxPaxGuiar', @paxGrupo AS '@paxGrupo', @politicaColtur AS '@politicaColtur', @paramNoCupoBus AS '@paramNoCupoBus'
+	--		, @cantidadParaLiberar AS '@cantidadParaLiberar', @cantidadItemLiberados AS '@cantidadItemLiberados', @cantidadMaximoLiberar AS '@cantidadMaximoLiberar', @porcentajeFechaEspecial AS '@porcentajeFechaEspecial', @paramNoGuia AS '@paramNoGuia', @paramNoCupoBus AS '@paramNoCupoBus'
+	SELECT * FROM @RangoPersonasTable
